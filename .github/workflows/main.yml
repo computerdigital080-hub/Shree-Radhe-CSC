@@ -19,27 +19,18 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Project Files
+      - name: Build APK
         run: |
-          mkdir -p app/src/main/java/com/example/webviewapp
-          mkdir -p app/src/main/res/layout
-          mkdir -p app/src/main/res/values
+          mkdir -p src/com/example/webviewapp res/layout res/values build/outputs/apk bin
 
-          # 1. AndroidManifest.xml
-          cat << 'EOF' > app/src/main/AndroidManifest.xml
+          # 1. AndroidManifest
+          cat << 'EOF' > AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
               package="com.example.webviewapp">
               <uses-permission android:name="android.permission.INTERNET" />
-              <application
-                  android:allowBackup="true"
-                  android:icon="@mipmap/ic_launcher"
-                  android:label="SRCSC"
-                  android:supportsRtl="true"
-                  android:theme="@android:style/Theme.NoTitleBar">
-                  <activity
-                      android:name=".MainActivity"
-                      android:exported="true">
+              <application android:label="SRCSC" android:supportsRtl="true">
+                  <activity android:name=".MainActivity" android:exported="true">
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
                           <category android:name="android.intent.category.LAUNCHER" />
@@ -49,8 +40,21 @@ jobs:
           </manifest>
           EOF
 
-          # 2. MainActivity.java
-          cat << 'EOF' > app/src/main/java/com/example/webviewapp/MainActivity.java
+          # 2. Layout
+          cat << 'EOF' > res/layout/activity_main.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent">
+              <WebView
+                  android:id="@+id/webview"
+                  android:layout_width="match_parent"
+                  android:layout_height="match_parent" />
+          </RelativeLayout>
+          EOF
+
+          # 3. Java Source
+          cat << 'EOF' > src/com/example/webviewapp/MainActivity.java
           package com.example.webviewapp;
 
           import android.app.Activity;
@@ -87,49 +91,26 @@ jobs:
           }
           EOF
 
-          # 3. Layout File
-          cat << 'EOF' > app/src/main/res/layout/activity_main.xml
-          <?xml version="1.0" encoding="utf-8"?>
-          <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
-              android:layout_width="match_parent"
-              android:layout_height="match_parent">
-              <WebView
-                  android:id="@+id/webview"
-                  android:layout_width="match_parent"
-                  android:layout_height="match_parent" />
-          </RelativeLayout>
-          EOF
+          # 4. Compile Resources & Code
+          AAPT=$ANDROID_HOME/build-tools/33.0.0/aapt
+          D8=$ANDROID_HOME/build-tools/33.0.0/d8
+          PLATFORM=$ANDROID_HOME/platforms/android-33/android.jar
 
-          # 4. app/build.gradle
-          cat << 'EOF' > app/build.gradle
-          plugins {
-              id 'com.android.application'
-          }
-          android {
-              namespace 'com.example.webviewapp'
-              compileSdk 33
-              defaultConfig {
-                  applicationId "com.example.webviewapp"
-                  minSdk 21
-                  targetSdk 33
-                  versionCode 1
-                  versionName "1.0"
-              }
-          }
-          EOF
-
-          # 5. settings.gradle
-          cat << 'EOF' > settings.gradle
-          include ':app'
-          EOF
-
-          gradle wrapper
-
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug
+          $AAPT package -f -m -J src -M AndroidManifest.xml -S res -I $PLATFORM
+          javac -classpath $PLATFORM -d bin $(find src -name "*.java")
+          $D8 --output bin bin/com/example/webviewapp/*.class
+          
+          $AAPT package -f -M AndroidManifest.xml -S res -I $PLATFORM -F build/outputs/apk/app-unsigned.apk .
+          
+          cd build/outputs/apk
+          $AAPT add app-unsigned.apk ../../../bin/classes.dex
+          
+          keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android,O=Android,C=US"
+          $ANDROID_HOME/build-tools/33.0.0/apksigner sign --ks debug.keystore --ks-pass pass:android app-unsigned.apk
+          mv app-unsigned.apk app-release.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: app-release
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: build/outputs/apk/app-release.apk
